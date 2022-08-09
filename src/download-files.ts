@@ -10,7 +10,7 @@ import {
   getChannelUploadFilePath,
   config,
 } from "./config.js";
-import { getChannels, getMessages, getUsers } from "./load-data.js";
+import { getChannels, getMessages, getUsers } from "./data-load.js";
 
 async function downloadURL(
   url: string,
@@ -68,14 +68,16 @@ async function downloadFile(
 }
 
 export async function downloadFilesForChannel(channelId: string) {
-  const messages = getMessages(channelId);
-  const channels = getChannels();
+  const messages = await getMessages(channelId);
+  const channels = await getChannels();
   const channel = channels.find(({ id }) => id === channelId);
   const fileMessages = messages.filter((m) => (m.files?.length || 0) > 0);
+  const getSpinnerText = (i: number) =>
+    `Downloading ${i}/${fileMessages.length} files for channel ${
+      channel?.name || channelId
+    }...`;
 
-  const spinner = ora(
-    `Downloading files for channel ${channel?.name || channelId}...`
-  ).start();
+  const spinner = ora(getSpinnerText(0)).start();
 
   for (const [i, fileMessage] of fileMessages.entries()) {
     if (!fileMessage.files) {
@@ -83,6 +85,8 @@ export async function downloadFilesForChannel(channelId: string) {
     }
 
     for (const file of fileMessage.files) {
+      spinner.text = getSpinnerText(i);
+      spinner.render();
       await downloadFile(file, channelId, i, fileMessages.length, spinner);
     }
   }
@@ -93,7 +97,7 @@ export async function downloadFilesForChannel(channelId: string) {
 }
 
 export async function downloadAvatars() {
-  const users = getUsers();
+  const users = await getUsers();
   const userIds = Object.keys(users);
 
   for (const userId of userIds) {
@@ -133,7 +137,7 @@ async function main() {
 
   if (lastArg === "channels") {
     console.log(`Downloading files for channels`);
-    const channels = getChannels();
+    const channels = await getChannels();
 
     for (const channel of channels) {
       if (channel.id) {

@@ -3,6 +3,7 @@ import inquirer from "inquirer";
 import fs from "fs-extra";
 import { User } from "@slack/web-api/dist/response/UsersInfoResponse";
 import { Channel } from "@slack/web-api/dist/response/ConversationsListResponse";
+import ora from "ora";
 
 import {
   CHANNELS_DATA_PATH,
@@ -11,24 +12,37 @@ import {
   OUT_DIR,
   config,
   TOKEN_FILE,
+  AUTOMATIC_MODE,
+  DATE_FILE,
 } from "./config.js";
-import { downloadChannels, downloadUser } from "./download-messages.js";
+import { downloadChannels, downloadExtras } from "./download-messages.js";
 import { downloadMessages } from "./download-messages.js";
 import { downloadAvatars, downloadFilesForChannel } from "./download-files.js";
 import { createHtmlForChannels } from "./create-html.js";
 import { createBackup, deleteBackup, deleteOlderBackups } from "./backup.js";
+import { isValid, parseISO } from "date-fns";
+import { createSearch } from "./search.js";
+import { write, writeAndMerge } from "./data-write.js";
+import { messagesCache, getUsers } from "./data-load.js";
+import { getSlackArchiveData, setSlackArchiveData } from "./archive-data.js";
 
 const { prompt } = inquirer;
 
 async function selectMergeFiles(): Promise<boolean> {
+  const defaultResponse = true;
+
   if (!fs.existsSync(CHANNELS_DATA_PATH)) {
     return false;
+  }
+
+  if (AUTOMATIC_MODE) {
+    return defaultResponse;
   }
 
   const { merge } = await prompt([
     {
       type: "confirm",
-      default: true,
+      default: defaultResponse,
       name: "merge",
       message: `We've found existing archive files. Do you want to append new data (recommended)? \n If you select "No", we'll delete the existing data.`,
     },
@@ -48,6 +62,10 @@ async function selectChannels(
     name: channel.name || channel.id || "Unknown",
     value: channel,
   }));
+
+  if (AUTOMATIC_MODE) {
+    return channels;
+  }
 
   const result = await prompt([
     {
@@ -82,6 +100,10 @@ async function selectChannelTypes(): Promise<Array<string>> {
     },
   ];
 
+  if (AUTOMATIC_MODE) {
+    return ["public_channel", "private_channel", "mpim", "im"];
+  }
+
   const result = await prompt([
     {
       type: "checkbox",
@@ -95,31 +117,6 @@ async function selectChannelTypes(): Promise<Array<string>> {
   return result["channel-types"];
 }
 
-function writeAndMerge(filePath: string, newData: any) {
-  let dataToWrite = newData;
-
-  if (fs.existsSync(filePath)) {
-    const oldData = fs.readJSONSync(filePath);
-
-    if (Array.isArray(oldData)) {
-      dataToWrite = [...oldData, ...newData];
-
-      if (newData && newData[0] && newData[0].id) {
-        dataToWrite = uniqBy(dataToWrite, (v: any) => v.id);
-      }
-    } else if (typeof newData === "object") {
-      dataToWrite = { ...oldData, ...newData };
-    } else {
-      console.error(`writeAndMerge: Did not understand type of data`, {
-        filePath,
-        newData,
-      });
-    }
-  }
-
-  fs.outputFileSync(filePath, JSON.stringify(dataToWrite, undefined, 2));
-}
-
 async function getToken() {
   if (config.token) {
     console.log(`Using token ${config.token}`);
@@ -127,7 +124,7 @@ async function getToken() {
   }
 
   if (fs.existsSync(TOKEN_FILE)) {
-    config.token = fs.readFileSync(TOKEN_FILE, "utf-8");
+    config.token = fs.readFileSync(TOKEN_FILE, "utf-8").trim();
     return;
   }
 
@@ -143,23 +140,55 @@ async function getToken() {
   config.token = result.token;
 }
 
+async function writeLastSuccessfulArchive() {
+  const now = new Date();
+  write(DATE_FILE, now.toISOString());
+}
+
+function getLastSuccessfulRun() {
+  if (!fs.existsSync(DATE_FILE)) {
+    return "";
+  }
+
+  const lastSuccessfulArchive = fs.readFileSync(DATE_FILE, "utf-8");
+
+  let date = null;
+
+  try {
+    date = parseISO(lastSuccessfulArchive);
+  } catch (error) {
+    return "";
+  }
+
+  if (date && isValid(date)) {
+    return `. Last successful run: ${date.toLocaleString()}`;
+  }
+
+  return "";
+}
+
 export async function main() {
-  console.log(`Welcome to slack-archive`);
+  console.log(`Welcome to slack-archive${getLastSuccessfulRun()}`);
+
+  if (AUTOMATIC_MODE) {
+    console.log(`Running in fully automatic mode without prompts`);
+  }
 
   await getToken();
   await createBackup();
 
-  const users: Record<string, User | null> = {};
+  const slackArchiveData = await getSlackArchiveData();
+  const users: Record<string, User> = await getUsers();
   const channelTypes = (await selectChannelTypes()).join(",");
 
   console.log(`Downloading channels...\n`);
-  const channels = await downloadChannels({ types: channelTypes });
+  const channels = await downloadChannels({ types: channelTypes }, users);
   const selectedChannels = await selectChannels(channels);
+  const newMessages: Record<string, number> = {};
 
   // Do we want to merge data?
   await selectMergeFiles();
-
-  writeAndMerge(CHANNELS_DATA_PATH, selectedChannels);
+  await writeAndMerge(CHANNELS_DATA_PATH, selectedChannels);
 
   for (const [i, channel] of selectedChannels.entries()) {
     if (!channel.id) {
@@ -167,36 +196,71 @@ export async function main() {
       continue;
     }
 
-    // Download messages & users
-    let result = await downloadMessages(channel, i, selectedChannels.length);
-    for (const message of result) {
-      if (message.user && users[message.user] === undefined) {
-        users[message.user] = await downloadUser(message);
-      }
+    // Do we already have everything?
+    slackArchiveData.channels[channel.id] =
+      slackArchiveData.channels[channel.id] || {};
+    if (slackArchiveData.channels[channel.id].fullyDownloaded) {
+      continue;
     }
 
+    // Download messages & users
+    let downloadData = await downloadMessages(
+      channel,
+      i,
+      selectedChannels.length
+    );
+    let result = downloadData.messages;
+    newMessages[channel.id] = downloadData.new;
+    await downloadExtras(channel, result, users);
+
+    // Download files
+    await downloadFilesForChannel(channel.id!);
+    await downloadAvatars();
+
     // Sort messages
+    const spinner = ora(
+      `Saving message data for ${channel.name || channel.id} to disk`
+    ).start();
+
     result = uniqBy(result, "ts");
     result = result.sort((a, b) => {
       return parseFloat(b.ts || "0") - parseFloat(a.ts || "0");
     });
 
-    writeAndMerge(USERS_DATA_PATH, users);
+    await writeAndMerge(USERS_DATA_PATH, users);
     fs.outputFileSync(
       getChannelDataFilePath(channel.id),
       JSON.stringify(result, undefined, 2)
     );
 
-    // Download files
-    await downloadFilesForChannel(channel.id!);
-    await downloadAvatars();
+    // Update the data load cache
+    messagesCache[channel.id!] = result;
+
+    // Update the data
+    const { is_archived, is_im, is_user_deleted } = channel;
+    if (is_archived || (is_im && is_user_deleted)) {
+      slackArchiveData.channels[channel.id].fullyDownloaded = true;
+    }
+    slackArchiveData.channels[channel.id].messages = result.length;
+
+    spinner.succeed(`Saved message data for ${channel.name || channel.id}`);
   }
 
-  // Create HTML
-  await createHtmlForChannels(selectedChannels);
+  // Save data
+  await setSlackArchiveData(slackArchiveData);
+
+  // Create HTML, but only for channels with new messages
+  await createHtmlForChannels(
+    selectedChannels.filter(({ id }) => id && newMessages[id] > 0)
+  );
+
+  // Create search file
+  await createSearch();
 
   await deleteBackup();
   await deleteOlderBackups();
+
+  await writeLastSuccessfulArchive();
 
   console.log(`All done.`);
 }

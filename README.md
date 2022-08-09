@@ -12,6 +12,7 @@ can still enjoy in 20 years. This tool will help you do that.
  * **Incremental backups**: If you already have local data, we'll extend it - no need to download existing stuff again.
  * **JSON included**: All data is also stored as JSON, so you can consume it with other tools later.
  * **No cloud, free**: Do all of this for free, without giving anyone your information.
+ * **Basic search**: Offers basic search functionality.
 
 <img width="1151" alt="Screen Shot 2021-09-09 at 6 43 55 PM" src="https://user-images.githubusercontent.com/1426799/132776566-0f75a1b4-4b9a-4b53-8a39-e44e8a747a68.png">
 
@@ -28,6 +29,14 @@ can still enjoy in 20 years. This tool will help you do that.
 
 [^1]: NPX is an acronym for Node Package Execute. It comes with NPM, the Node Package Manager. 
 NPX has the ability to execute a Node package which wasn't previously installed, downloading it on the flight from the NPM registry.
+
+### Parameters
+
+```
+--automatic: Don't prompt and automatically fetch all messages from all channels.
+--no-backup: Don't create backups. Not recommended.
+--no-search: Don't create a search file, saving disk space.
+```
 
 ## Getting a token
 
