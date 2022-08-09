@@ -40,8 +40,7 @@ This will be mostly painless, I promise.
 - Head over to https://api.slack.com/apps and sign in to your account.
 - Press the `Create New App` button and select the `From an app manifest` option.
 - Choose the workspace you'd like to backup with slack-archive.
-- When prompted for an App Manifest, just paste in the following yaml configuration:
-
+- When prompted for an App Manifest, just paste in the following[^2] yaml configuration:
   ```yaml
   display_information:
   name: Slack-Archive_<username>
@@ -76,6 +75,7 @@ This will be mostly painless, I promise.
 - Replace `<username>` with whatever identifier you prefer (e.g. `your-surname`); please notice that this app-name will be visible to all the workspace members, in the `Apps` tab of the Slack UI.
 - Proceed and confirm the summary: your custom app is ready!
  
+[^2]: It can also be found as a single file in the root folder of the repo, if you want to be sure not to mess with whitespace (as it is crucial for yaml syntax). Look for `slack-archive.yaml`.
 
 ### 2) Authorize
 
