@@ -52,13 +52,13 @@ This will be mostly painless, I promise.
 - When prompted for an App Manifest, just paste in the following[^2] yaml configuration:
   ```yaml
   display_information:
-  name: Slack-Archive_<username>
-  description: Export user-visible channel data as static HTML. Incrementally.
-  background_color: "#de0446"
+    name: Slack-Archive_<username>
+    description: Export user-visible channel data as static HTML. Incrementally.
+    background_color: "#de0446"
   features:
-  bot_user:
-    display_name: Slack-Archive
-    always_online: false
+    bot_user:
+      display_name: Slack-Archive
+      always_online: false
   oauth_config:
     scopes:
       user:
